@@ -1,16 +1,13 @@
 const { Client, GatewayIntentBits, Partials, Collection, Events } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
-const buttonHandlers = require('./components/embedBuilder/handlers/buttonHandlers');
-const selectHandlers = require('./components/embedBuilder/handlers/selectHandlers');
-const modalHandlers = require('./components/embedBuilder/handlers/modalHandlers');
 const connectMongo = require('./database/connection');
+const notifyExpiredVips = require('./utils/vipNotifier');
+require('dotenv').config();
 
-// Ativando todas as intents disponíveis
-const allIntents = Object.values(GatewayIntentBits);
-
+// Inicialização do cliente Discord
 const client = new Client({
-  intents: allIntents,
+  intents: Object.values(GatewayIntentBits),
   partials: [
     Partials.Channel,
     Partials.Message,
@@ -20,111 +17,38 @@ const client = new Client({
   ]
 });
 
-// Coleções para armazenar comandos e cooldowns
+// Coleções globais
 client.commands = new Collection();
 client.cooldowns = new Collection();
 
-// Importação dos handlers
-const handlersPath = path.join(__dirname, 'handlers');
-const handlerFiles = fs.readdirSync(handlersPath).filter(file => file.endsWith('.js'));
-
-// Event listener para interações
-client.on('interactionCreate', async interaction => {
-  try {
-    // Slash commands
-    if (interaction.isChatInputCommand()) {
-      // Seu handler de comandos
-      const command = client.commands.get(interaction.commandName);
-      if (command) await command.execute(client, interaction);
-      return;
-    }
-    
-    // Modals do EmbedBuilder DEVEM ser tratados aqui:
-    if (interaction.isModalSubmit()) {
-      // Log de diagnóstico
-      console.log('[Modal Global] customId:', interaction.customId);
-      // Se for um modal do builder, encaminhe para o handler
-      if (interaction.customId.startsWith('embed_')) {
-        await modalHandlers.handle(client, interaction);
-      }
-    }
-  } catch (err) {
-    console.error('Erro no interactionCreate:', err);
-    if (!interaction.replied && !interaction.deferred) {
-      await interaction.reply({ content: 'Ocorreu um erro.', ephemeral: true });
+// Carregamento dinâmico dos handlers
+async function loadHandlers() {
+  const handlersPath = path.join(__dirname, 'handlers');
+  const handlerFiles = fs.readdirSync(handlersPath).filter(file => file.endsWith('.js'));
+  for (const file of handlerFiles) {
+    const filePath = path.join(handlersPath, file);
+    try {
+      const handler = require(filePath);
+      await handler(client);
+      console.log(`Handler carregado: ${file}`);
+    } catch (error) {
+      console.error(`Erro ao carregar handler ${file}:`, error);
     }
   }
-});
+}
 
-const notifyExpiredVips = require('./utils/vipNotifier');
-setInterval(() => notifyExpiredVips(client), 60 * 1000); // roda a cada minuto
-
-
-// Evento ready com informações de sharding
-client.once(Events.ClientReady, async () => {
-  const shardInfo = client.shard 
-    ? `[Shard ${client.shard.ids.join('/')}]` 
-    : '[Sem Sharding]';
-  
-  console.log(`${shardInfo} Bot online como ${client.user.tag}`);
-  
-  try {
-    // Carrega a configuração VIP
-    const vipConfig = require('./utils/vipUtils').ensureVipConfig();
-    
-    // Registra comandos por guild
-    for (const guildId in vipConfig.guildCommands) {
-      const guild = await client.guilds.fetch(guildId).catch(() => null);
-      if (guild) {
-        const commands = Array.from(client.commands.values()).map(cmd => cmd.data);
-        await guild.commands.set(commands);
-        console.log(`✅ Comandos registrados para a guild: ${guild.name}`);
-      }
-    }
-    
-    console.log('✅ Comandos registrados para todas as guilds configuradas');
-    
-    // Função para atualizar estatísticas globais do bot
-    async function updateBotStats() {
-      try {
-        if (!client.shard) return;
-        
-        const guildCounts = await client.shard.fetchClientValues('guilds.cache.size');
-        const totalGuilds = guildCounts.reduce((acc, count) => acc + count, 0);
-        
-        const memberCounts = await client.shard.broadcastEval(c => 
-          c.guilds.cache.reduce((acc, guild) => acc + guild.memberCount, 0)
-        );
-        const totalMembers = memberCounts.reduce((acc, count) => acc + count, 0);
-        
-        console.log(`${shardInfo} Total: ${totalGuilds} servidores e ${totalMembers} membros`);
-      } catch (error) {
-        console.error('Erro ao obter estatísticas:', error);
-      }
-    }
-    
-    // Atualiza estatísticas a cada 30 minutos se estiver em sharding
-    if (client.shard) {
-      setInterval(updateBotStats, 30 * 60 * 1000);
-      updateBotStats();
-    }
-  } catch (error) {
-    console.error('Erro ao inicializar o bot:', error);
-  }
-
-  // --------------------------
-  // SISTEMA DE STATUS FIVEM
-  // --------------------------
-  const FiveMAPI = require('./utils/fivemUtils');
+// Sistema de status FiveM (opcional)
+async function setupFiveMStatus(client) {
   const CONFIG_PATH = path.join(__dirname, 'config.json');
+  if (!fs.existsSync(CONFIG_PATH)) return;
+  const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+  if (!config.fivem || !config.fivem.statusChannelId || !config.fivem.ip || !config.fivem.porta) return;
+
+  const FiveMAPI = require('./utils/fivemUtils');
   const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
   async function updateFiveMStatusEmbed() {
     try {
-      if (!fs.existsSync(CONFIG_PATH)) return;
-      const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
-      if (!config.fivem || !config.fivem.statusChannelId || !config.fivem.ip || !config.fivem.porta) return;
-
       const channel = await client.channels.fetch(config.fivem.statusChannelId).catch(() => null);
       if (!channel) return;
 
@@ -153,7 +77,7 @@ client.once(Events.ClientReady, async () => {
           .setDisabled(!status.online)
       );
 
-      // Tenta encontrar e editar a última mensagem do bot, senão envia uma nova
+      // Edita mensagem anterior ou envia nova
       const messages = await channel.messages.fetch({ limit: 10 });
       const botMessage = messages.find(msg => msg.author.id === client.user.id && msg.embeds.length > 0 && msg.embeds[0].title === (config.fivem.titulo || 'Servidor FiveM'));
       if (botMessage) {
@@ -166,39 +90,67 @@ client.once(Events.ClientReady, async () => {
     }
   }
 
-  // Atualização automática a cada 5 minutos
   setInterval(updateFiveMStatusEmbed, 5 * 60 * 1000);
-  // Atualiza logo ao iniciar
   updateFiveMStatusEmbed();
-});
+}
 
-// Carregamento dinâmico dos handlers
+// Inicialização principal
 (async () => {
-  for (const file of handlerFiles) {
-    const filePath = path.join(handlersPath, file);
-    const handler = require(filePath);
-    
-    // Executa cada handler passando o cliente
-    try {
-      await handler(client);
-      console.log(`Handler carregado: ${file}`);
-    } catch (error) {
-      console.error(`Erro ao carregar handler ${file}:`, error);
-    }
+  try {
+    // 1. Conecta ao MongoDB antes de tudo
+    await connectMongo();
+
+    // 2. Carrega handlers (comandos, eventos, etc)
+    await loadHandlers();
+
+    // 3. Login do bot
+    await client.login(process.env.BOT_TOKEN);
+
+    // 4. Notificador de VIPs expirados (async, não bloqueia)
+    setInterval(() => notifyExpiredVips(client), 60 * 1000);
+
+    // 5. Sistema de status FiveM (opcional)
+    setupFiveMStatus(client);
+
+    // 6. Evento ready
+    client.once(Events.ClientReady, async () => {
+      const shardInfo = client.shard
+        ? `[Shard ${client.shard.ids.join('/')}]`
+        : '[Sem Sharding]';
+      console.log(`${shardInfo} Bot online como ${client.user.tag}`);
+
+      // Estatísticas globais (sharding)
+      async function updateBotStats() {
+        try {
+          if (!client.shard) return;
+          const guildCounts = await client.shard.fetchClientValues('guilds.cache.size');
+          const totalGuilds = guildCounts.reduce((acc, count) => acc + count, 0);
+          const memberCounts = await client.shard.broadcastEval(c =>
+            c.guilds.cache.reduce((acc, guild) => acc + guild.memberCount, 0)
+          );
+          const totalMembers = memberCounts.reduce((acc, count) => acc + count, 0);
+          console.log(`${shardInfo} Total: ${totalGuilds} servidores e ${totalMembers} membros`);
+        } catch (error) {
+          console.error('Erro ao obter estatísticas:', error);
+        }
+      }
+
+      if (client.shard) {
+        setInterval(updateBotStats, 30 * 60 * 1000);
+        updateBotStats();
+      }
+    });
+
+  } catch (error) {
+    console.error('Erro crítico ao iniciar o bot:', error);
+    process.exit(1);
   }
-  
-  // Login do bot após carregar todos os handlers
-  client.login(process.env.BOT_TOKEN);
 })();
 
-connectMongo();
-
-// Tratamento de erros não capturados
+// Tratamento global de erros
 process.on('unhandledRejection', (error) => {
   console.error(`Erro não tratado:`, error);
 });
-
 process.on('uncaughtException', (error) => {
   console.error(`Exceção não capturada:`, error);
-  // Em produção, você pode querer reiniciar o bot ou notificar administradores
 });
