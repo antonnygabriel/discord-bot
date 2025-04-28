@@ -2,10 +2,34 @@
 const { SlashCommandBuilder } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
-const { isVipUser, ensureVipConfig } = require('../../utils/vipUtils');
 const { isOwner, notOwnerEmbed, errorEmbed, successEmbed } = require('../../utils/ownerUtils');
 
 const VIP_CONFIG_PATH = path.join(__dirname, '../../../vipConfig.json');
+
+// Função para garantir que o arquivo de configuração VIP existe
+function ensureVipConfig() {
+  try {
+    if (fs.existsSync(VIP_CONFIG_PATH)) {
+      return JSON.parse(fs.readFileSync(VIP_CONFIG_PATH, 'utf8'));
+    } else {
+      const defaultConfig = {
+        vipUsers: [],
+        guildCommands: {}
+      };
+      fs.writeFileSync(VIP_CONFIG_PATH, JSON.stringify(defaultConfig, null, 2));
+      return defaultConfig;
+    }
+  } catch (error) {
+    console.error('Erro ao carregar configuração VIP:', error);
+    return { vipUsers: [], guildCommands: {} };
+  }
+}
+
+// Função para verificar se um usuário é VIP
+function isVipUser(userId) {
+  const config = ensureVipConfig();
+  return config.vipUsers.includes(userId);
+}
 
 module.exports = {
   data: new SlashCommandBuilder()

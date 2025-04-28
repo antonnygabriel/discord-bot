@@ -106,6 +106,65 @@ client.once(Events.ClientReady, async () => {
   } catch (error) {
     console.error('Erro ao inicializar o bot:', error);
   }
+
+  // --------------------------
+  // SISTEMA DE STATUS FIVEM
+  // --------------------------
+  const FiveMAPI = require('./utils/fivemUtils');
+  const CONFIG_PATH = path.join(__dirname, 'config.json');
+  const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+
+  async function updateFiveMStatusEmbed() {
+    try {
+      if (!fs.existsSync(CONFIG_PATH)) return;
+      const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+      if (!config.fivem || !config.fivem.statusChannelId || !config.fivem.ip || !config.fivem.porta) return;
+
+      const channel = await client.channels.fetch(config.fivem.statusChannelId).catch(() => null);
+      if (!channel) return;
+
+      const fivemAPI = new FiveMAPI(config.fivem.ip, config.fivem.porta);
+      const status = await fivemAPI.getServerStatus();
+      const playerCount = status.online ? await fivemAPI.getPlayers() : 0;
+      const maxPlayers = status.online ? (await fivemAPI.getServerInfo())?.vars?.sv_maxClients || 64 : 64;
+
+      const embed = new EmbedBuilder()
+        .setTitle(config.fivem.titulo || 'Servidor FiveM')
+        .setDescription(config.fivem.descricao || `Servidor: ${config.fivem.ip}:${config.fivem.porta}`)
+        .setColor(status.online ? (config.fivem.cor || '#00FF00') : '#FF0000')
+        .addFields(
+          { name: 'Status', value: status.online ? '✅ Online' : '❌ Offline', inline: true },
+          { name: 'Jogadores', value: `${playerCount}/${maxPlayers}`, inline: true }
+        )
+        .setTimestamp();
+
+      if (config.fivem.imagem) embed.setImage(config.fivem.imagem);
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setLabel(config.fivem.botao || 'Conectar')
+          .setStyle(ButtonStyle.Link)
+          .setURL(`fivem://connect/${config.fivem.ip}:${config.fivem.porta}`)
+          .setDisabled(!status.online)
+      );
+
+      // Tenta encontrar e editar a última mensagem do bot, senão envia uma nova
+      const messages = await channel.messages.fetch({ limit: 10 });
+      const botMessage = messages.find(msg => msg.author.id === client.user.id && msg.embeds.length > 0 && msg.embeds[0].title === (config.fivem.titulo || 'Servidor FiveM'));
+      if (botMessage) {
+        await botMessage.edit({ embeds: [embed], components: [row] });
+      } else {
+        await channel.send({ embeds: [embed], components: [row] });
+      }
+    } catch (err) {
+      console.error('Erro ao atualizar status FiveM:', err);
+    }
+  }
+
+  // Atualização automática a cada 5 minutos
+  setInterval(updateFiveMStatusEmbed, 5 * 60 * 1000);
+  // Atualiza logo ao iniciar
+  updateFiveMStatusEmbed();
 });
 
 // Carregamento dinâmico dos handlers

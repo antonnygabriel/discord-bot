@@ -1,6 +1,7 @@
 // src/utils/vipUtils.js
 const fs = require('fs');
 const path = require('path');
+const { isOwner } = require('./ownerUtils'); // Importa a função isOwner do ownerUtils.js
 
 const VIP_CONFIG_PATH = path.join(__dirname, '../database/vipConfig.json');
 
@@ -15,8 +16,12 @@ function ensureVipConfig() {
   return JSON.parse(fs.readFileSync(VIP_CONFIG_PATH));
 }
 
-// Verifica se um usuário é VIP
+// Verifica se um usuário é VIP OU dono
 function isVipUser(userId) {
+  // Primeiro verifica se é o dono usando a função importada
+  if (isOwner(userId)) return true;
+  
+  // Se não for o dono, verifica se está na lista VIP
   const config = ensureVipConfig();
   return config.vipUsers.includes(userId);
 }
