@@ -4,6 +4,7 @@ const path = require('path');
 const buttonHandlers = require('./components/embedBuilder/handlers/buttonHandlers');
 const selectHandlers = require('./components/embedBuilder/handlers/selectHandlers');
 const modalHandlers = require('./components/embedBuilder/handlers/modalHandlers');
+const connectMongo = require('./database/connection');
 
 // Ativando todas as intents disponíveis
 const allIntents = Object.values(GatewayIntentBits);
@@ -54,6 +55,10 @@ client.on('interactionCreate', async interaction => {
     }
   }
 });
+
+const notifyExpiredVips = require('./utils/vipNotifier');
+setInterval(() => notifyExpiredVips(client), 60 * 1000); // roda a cada minuto
+
 
 // Evento ready com informações de sharding
 client.once(Events.ClientReady, async () => {
@@ -185,6 +190,8 @@ client.once(Events.ClientReady, async () => {
   // Login do bot após carregar todos os handlers
   client.login(process.env.BOT_TOKEN);
 })();
+
+connectMongo();
 
 // Tratamento de erros não capturados
 process.on('unhandledRejection', (error) => {

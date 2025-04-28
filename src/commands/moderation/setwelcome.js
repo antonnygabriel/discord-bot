@@ -1,37 +1,35 @@
 const { SlashCommandBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
-const { setGuildConfig } = require('../../utils/welcomeConfig');
+const GuildConfig = require('../../database/models/GuildConfig');
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('setwelcome')
     .setDescription('Configura o canal de boas-vindas do servidor')
     .addChannelOption(option =>
-      option.setName('canal')
-        .setDescription('Canal para mensagens de boas-vindas')
+      option
+        .setName('canal')
+        .setDescription('Canal de texto para mensagens de boas-vindas')
         .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
         .setRequired(true)
     )
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
   async execute(client, interaction) {
+    const channel = interaction.options.getChannel('canal');
+    if (!channel || (channel.type !== ChannelType.GuildText && channel.type !== ChannelType.GuildAnnouncement)) {
+      return interaction.reply({ content: 'Selecione um canal de texto válido.', ephemeral: true });
+    }
+
     try {
-      // Defer imediatamente para garantir tempo
-      await interaction.deferReply({ ephemeral: true });
-
-      const channel = interaction.options.getChannel('canal');
-      if (!channel || !channel.isTextBased()) {
-        return await interaction.editReply({ content: 'Por favor, selecione um canal de texto válido.' });
-      }
-
-      setGuildConfig(interaction.guildId, { welcomeChannel: channel.id });
-
-      await interaction.editReply({
-        content: `✅ Canal de boas-vindas configurado para ${channel}.`
-      });
-    } catch (error) {
-      console.error('Erro no /setwelcome:', error);
-      if (interaction.deferred || interaction.replied)
-        await interaction.editReply({ content: 'Ocorreu um erro ao configurar o canal de boas-vindas.' });
+      await GuildConfig.findOneAndUpdate(
+        { guildId: interaction.guild.id },
+        { welcomeChannel: channel.id },
+        { upsert: true, new: true }
+      );
+      await interaction.reply({ content: `Canal de boas-vindas configurado para ${channel}.`, ephemeral: true });
+    } catch (err) {
+      console.error('[MongoDB] Erro ao salvar config:', err);
+      await interaction.reply({ content: 'Erro ao salvar configuração no banco de dados.', ephemeral: true });
     }
   }
 };

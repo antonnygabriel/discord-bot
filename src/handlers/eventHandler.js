@@ -12,7 +12,8 @@ module.exports = async (client) => {
   const eventFiles = fs.readdirSync(eventsPath).filter(file => file.endsWith('.js'));
   
   for (const file of eventFiles) {
-    const filePath = path.join(eventsPath, file);
+    // Use caminho absoluto para require
+    const filePath = path.resolve(eventsPath, file);
     const event = require(filePath);
     
     // Verifica se o evento deve ser executado uma vez ou várias vezes
